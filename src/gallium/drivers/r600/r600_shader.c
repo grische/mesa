@@ -3748,8 +3748,18 @@ static int tgsi_op2_64_params(struct r600_shader_ctx *ctx, bool singledest, bool
 	struct r600_bytecode_alu alu;
 	int i, j, r, lasti = tgsi_last_instruction(write_mask);
 	int use_tmp = 0;
+	bool emulate_fp64 = false;
+
+	if(ctx->bc->family != CHIP_CYPRESS &&
+		ctx->bc->family != CHIP_CAYMAN && ctx->bc->family != CHIP_ARUBA ) {
+		fprintf(stderr, "tgsi_op2_64_params() - Should be emulating FP64!\n");
+		emulate_fp64 = true;
+	}
 
 	if (singledest) {
+		if (emulate_fp64)
+			fprintf(stderr, "tgsi_op2_64_params() - singledest, write_mask = %d\n", write_mask);
+
 		switch (write_mask) {
 		case 0x1:
 			write_mask = 0x3;
@@ -3766,6 +3776,21 @@ static int tgsi_op2_64_params(struct r600_shader_ctx *ctx, bool singledest, bool
 			use_tmp = 3;
 			break;
 		}
+	}
+
+	switch(ctx->parse.FullToken.FullInstruction.Instruction.Opcode) {
+		case TGSI_OPCODE_DSGE:
+			fprintf(stderr, "tgsi_op2_64_params() - Received TGSI_OPCODE_DSGE (%d)\n", TGSI_OPCODE_DSGE);
+			break;
+		case TGSI_OPCODE_DADD:
+			fprintf(stderr, "tgsi_op2_64_params() - Received TGSI_OPCODE_DADD (%d)\n", TGSI_OPCODE_DADD);
+			break;
+		case TGSI_OPCODE_DABS:
+			fprintf(stderr, "tgsi_op2_64_params() - Received TGSI_OPCODE_DABS (%d)\n", TGSI_OPCODE_DABS);
+			break;
+		default:
+			fprintf(stderr, "tgsi_op2_64_params() - Received OPCODE %u\n",ctx->parse.FullToken.FullInstruction.Instruction.Opcode);
+			break;
 	}
 
 	lasti = tgsi_last_instruction(write_mask);
@@ -3787,6 +3812,18 @@ static int tgsi_op2_64_params(struct r600_shader_ctx *ctx, bool singledest, bool
 				alu.dst.write = 0;
 		} else
 			tgsi_dst(ctx, &inst->Dst[0], i, &alu.dst);
+
+		fprintf(stderr, " i=%u \t", i);
+		if ( emulate_fp64) {
+			switch(ctx->inst_info->op) {
+				case ALU_OP2_SETGE_64:
+					fprintf(stderr, "  Received ALU_OP2_SETGE_64 (%u)\n",  ctx->inst_info->op);
+					break;
+				default:
+					fprintf(stderr, "  Received alu.op %u\n",  ctx->inst_info->op);
+					break;
+			}
+		}
 
 		alu.op = ctx->inst_info->op;
 		if (ctx->parse.FullToken.FullInstruction.Instruction.Opcode == TGSI_OPCODE_DABS) {
