@@ -2945,7 +2945,13 @@ static int r600_shader_from_tgsi(struct r600_context *rctx,
 	tgsi_scan_shader(tokens, &ctx.info);
 	shader->indirect_files = ctx.info.indirect_files;
 
-	shader->uses_doubles = ctx.info.uses_doubles;
+
+	if(ctx.bc->family != CHIP_CYPRESS &&
+		ctx.bc->family != CHIP_CAYMAN && ctx.bc->family != CHIP_ARUBA ) {
+		shader->uses_doubles = false;
+	} else {
+		shader->uses_doubles = ctx.info.uses_doubles;
+	}
 
 	indirect_gprs = ctx.info.indirect_files & ~((1 << TGSI_FILE_CONSTANT) | (1 << TGSI_FILE_SAMPLER));
 	tgsi_parse_init(&ctx.parse, tokens);
