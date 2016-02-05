@@ -3904,8 +3904,81 @@ static int tgsi_op2_64(struct r600_shader_ctx *ctx)
 	return tgsi_op2_64_params(ctx, false, false);
 }
 
+static int tgsi_op2_64_dsge_emulation(struct r600_shader_ctx *ctx)
+{
+	struct tgsi_full_instruction *inst = &ctx->parse.FullToken.FullInstruction;
+	struct r600_bytecode_alu alu;
+
+	int r, i;
+	int lasti = tgsi_last_instruction(inst->Dst[0].Register.WriteMask);
+
+	/* LSHL x */
+	memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+	alu.op = ALU_OP2_LSHL_INT;
+	alu.dst.chan = 0;
+	alu.dst.write = 0;
+	r600_bytecode_src(&alu.src[0], &ctx->src[0], 3);
+	alu.src[0].chan = 3;
+	alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
+	alu.src[1].value = 0x0a;
+	r = r600_bytecode_add_alu(ctx->bc, &alu);
+	if (r)
+		return r;
+
+	/* LSHR y */
+	memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+	alu.op = ALU_OP2_LSHR_INT;
+	alu.dst.chan = 1;
+	alu.dst.write = 1;
+	r600_bytecode_src(&alu.src[0], &ctx->src[0], 2);
+	alu.src[0].chan = 2;
+	alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
+	alu.src[1].value = 0x16;
+	r = r600_bytecode_add_alu(ctx->bc, &alu);
+	if (r)
+		return r;
+
+	/* LSHL z */
+	memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+	alu.op = ALU_OP2_LSHL_INT;
+	alu.dst.chan = 2;
+	alu.dst.write = 0;
+	r600_bytecode_src(&alu.src[0], &ctx->src[0], 1);
+	alu.src[0].chan = 1;
+	alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
+	alu.src[1].value = 0x0a;
+	r = r600_bytecode_add_alu(ctx->bc, &alu);
+	if (r)
+		return r;
+
+	/* LSHR w */
+	memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+	alu.op = ALU_OP2_LSHR_INT;
+	alu.dst.chan = 3;
+	alu.dst.write = 1;
+	r600_bytecode_src(&alu.src[0], &ctx->src[0], 0);
+	alu.src[0].chan = 0;
+	alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
+	alu.src[1].value = 0x16;
+	r = r600_bytecode_add_alu(ctx->bc, &alu);
+	if (r)
+		return r;
+
+	// alu.last = 1;
+
+	return 0;
+}
+
 static int tgsi_op2_64_single_dest(struct r600_shader_ctx *ctx)
 {
+	if(ctx->bc->family != CHIP_CYPRESS &&
+		ctx->bc->family != CHIP_CAYMAN && ctx->bc->family != CHIP_ARUBA ) {
+		fprintf(stderr, "tgsi_op2_64_single_dest() Emulating FP64\n");
+		if (ctx->parse.FullToken.FullInstruction.Instruction.Opcode == TGSI_OPCODE_DSGE ) {
+			fprintf(stderr, "tgsi_op2_64_single_dest() Received TGSI_OPCODE_DSGE\n");
+			return tgsi_op2_64_dsge_emulation(ctx);
+		}
+	}
 	return tgsi_op2_64_params(ctx, true, false);
 }
 
