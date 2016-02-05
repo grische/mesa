@@ -190,8 +190,12 @@ int r600_pipe_shader_create(struct pipe_context *ctx,
 	use_sb &= (shader->shader.processor_type != TGSI_PROCESSOR_TESS_CTRL);
 	use_sb &= (shader->shader.processor_type != TGSI_PROCESSOR_TESS_EVAL);
 
-	/* disable SB for shaders using doubles */
-	use_sb &= !shader->shader.uses_doubles;
+	/* disable SB for shaders using doubles and chips using hw fp64 */
+	if (shader->shader.bc.family == CHIP_CYPRESS ||
+		shader->shader.bc.family == CHIP_CAYMAN ||
+		shader->shader.bc.family == CHIP_ARUBA ) {
+		use_sb &= !shader->shader.uses_doubles;
+	}
 
 	/* Check if the bytecode has already been built. */
 	if (!shader->shader.bc.bytecode) {
