@@ -3910,131 +3910,377 @@ static int tgsi_op2_64_dsge_emulation(struct r600_shader_ctx *ctx)
 	struct r600_bytecode_alu alu;
 
 	int r, i;
-	int lasti = tgsi_last_instruction(inst->Dst[0].Register.WriteMask);
-	fprintf(stderr, "tgsi_op2_64_dsge_emulation() - lasti = %d", lasti);
+	//int lasti = tgsi_last_instruction(inst->Dst[0].Register.WriteMask);
+	//fprintf(stderr, "tgsi_op2_64_dsge_emulation() - lasti = %d", lasti);
 
-	int tmp_frac = r600_get_temp(ctx);
+	int tmp_mantissa_low  = r600_get_temp(ctx);
+	int tmp_mantissa_high = r600_get_temp(ctx);
+	int tmp_sign          = r600_get_temp(ctx);
+	int tmp_exponent      = r600_get_temp(ctx);
+	int tmp_temporary     = r600_get_temp(ctx);
 
-	/* extract minor fractional part */
-	for (i=0; i<4; i+=2) {
-		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
-		alu.op = ALU_OP0_NOP;
-		alu.dst.chan = i;
-		alu.last = i > 0;
-		r = r600_bytecode_add_alu(ctx->bc, &alu);
-		if (r)
-			return r;
-	}
-
-	/* extract major fractional part */
-	for (i=1; i<4; i+=2) {
+	/* tmp0: extract major fractional part */
+	for (i=0; i<2; i++) {
 		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
 		alu.op = ALU_OP2_AND_INT;
-		alu.dst.chan = i;
-		alu.dst.write = 0;
-		r600_bytecode_src(&alu.src[0], &ctx->src[0], 0);
-		alu.src[0].chan = i;
+		alu.dst.sel = tmp_temporary;
+		alu.dst.chan = i*2; //x, z
+		alu.dst.write = 1;
+		r600_bytecode_src(&alu.src[0], &ctx->src[i], 1);
 		alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
 		alu.src[1].value = 0x000fffff;
-		alu.last = i-1 > 0;
+		alu.last = i > 0;
 		r = r600_bytecode_add_alu(ctx->bc, &alu);
 		if (r)
 			return r;
 	}
 
-	/* shift minor fractional part to lower bits */
-	for (i=0; i<4; i+=2) {
+	/* tmp1: shift minor fractional part to lower bits */
+	for (i=0; i<2; i++) {
 		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
 		alu.op = ALU_OP2_LSHR_INT;
-		alu.dst.chan = i;
-		alu.dst.write = 0;
-		alu.src[0].sel = V_SQ_ALU_SRC_PV;
-		alu.src[0].chan = i;
+		alu.dst.sel = tmp_temporary;
+		alu.dst.chan = i*2+1; //y, w
+		alu.dst.write = 1;
+		r600_bytecode_src(&alu.src[0], &ctx->src[i], 0);
 		alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
-		alu.src[1].value = 0x16; // 22
+		alu.src[1].value = 0x15; // 21
 		alu.last = i > 0;
 		r = r600_bytecode_add_alu(ctx->bc, &alu);
 		if (r)
 			return r;
 	}
 
-	/* shift major fractional part to higher bits but leave two bits open (for sign + 1.) */
-	for (i=1; i<4; i+=2) {
+	/* tmp0: shift major fractional part */
+	for (i=0; i<2; i++) {
 		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
 		alu.op = ALU_OP2_LSHL_INT;
-		alu.dst.chan = i;
-		alu.dst.write = 0;
-		alu.src[0].sel = V_SQ_ALU_SRC_PV;
-		alu.src[0].chan = i;
-		alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
-		alu.src[1].value = 0x0a; // 10
-		alu.last = i-1 > 0;
-		r = r600_bytecode_add_alu(ctx->bc, &alu);
-		if (r)
-			return r;
-	}
-	/* paste fractional parts together */
-	for (i=0; i<4; i+=2) {
-		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
-		alu.op = ALU_OP2_OR_INT;
-		alu.dst.sel = tmp_frac;
-		alu.dst.chan = i;
+		alu.dst.sel = tmp_temporary;
+		alu.dst.chan = i*2; //x, z
 		alu.dst.write = 1;
-		alu.src[0].sel = V_SQ_ALU_SRC_PV;
-		alu.src[0].chan = i;
-		alu.src[1].sel = V_SQ_ALU_SRC_PV;
-		alu.src[1].chan = i+1;
+		alu.src[0].sel = tmp_temporary;
+		alu.src[0].chan = i*2;
+		alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
+		alu.src[1].value = 11;
 		alu.last = i > 0;
 		r = r600_bytecode_add_alu(ctx->bc, &alu);
 		if (r)
 			return r;
 	}
 
-	/* TEST MASK */
-	for (i=0; i<4; i+=2) {
+	/* exp: get exp of src0 */
+	for (i=0; i<2; i++) {
+	  alu.op = ALU_OP2_AND_INT;
+	  alu.dst.sel = tmp_exponent;
+	  alu.dst.chan = i;
+	  alu.dst.write = 1;
+	  r600_bytecode_src(&alu.src[0], &ctx->src[i], 1);
+	  alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
+	  alu.src[1].value = 0x7ff00000;
+	  alu.last = i > 0;
+	  r = r600_bytecode_add_alu(ctx->bc, &alu);
+	  if (r)
+	  	return r;
+	}
+
+	/* sign: get sign of src0 */
+	for (i=0; i<2; i++) {
+	  memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+	  alu.op = ALU_OP2_LSHR_INT;
+	  alu.dst.sel = tmp_sign;
+	  alu.dst.chan = i;
+	  alu.dst.write = 1;
+	  r600_bytecode_src(&alu.src[0], &ctx->src[i], 1);
+	  alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
+	  alu.src[1].value = 31;
+	  alu.last = i > 0;
+	  r = r600_bytecode_add_alu(ctx->bc, &alu);
+	  if (r)
+	  	return r;
+	}
+
+	/* hmant: paste tmp fractional parts together */
+	for (i=0; i<2; i++) {
+		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+		alu.op = ALU_OP2_OR_INT;
+		alu.dst.sel = tmp_mantissa_high;
+		alu.dst.chan = i;
+		alu.dst.write = 1;
+		alu.src[0].sel = tmp_temporary;
+		alu.src[0].chan = i*2;
+		alu.src[1].sel = tmp_temporary;
+		alu.src[1].chan = i*2+1;
+		alu.last = i > 0;
+		r = r600_bytecode_add_alu(ctx->bc, &alu);
+		if (r)
+			return r;
+	}
+
+	/* lmant: shift minor fractional part */
+	for (i=0; i<2; i++) {
 		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
 		alu.op = ALU_OP2_AND_INT;
-		alu.dst.sel = tmp_frac;
+		alu.dst.sel = tmp_mantissa_low;
 		alu.dst.chan = i;
 		alu.dst.write = 1;
-		alu.src[0].sel = tmp_frac;
-		alu.src[0].chan = i;
+		r600_bytecode_src(&alu.src[0], &ctx->src[i], 0);
 		alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
-		alu.src[1].value = 0x3FFFFFFF;
+		alu.src[1].value = 0x000007ff;
 		alu.last = i > 0;
 		r = r600_bytecode_add_alu(ctx->bc, &alu);
 		if (r)
 			return r;
 	}
 
-	/* set second highest bit to 1 on the major fractional part */
-/*
-	for (i=0; i<4; i+=2) {
+	/* subnormal: overwrite sign */
+	for (i=0; i<2; i++) {
+		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+		alu.op = ALU_OP3_CNDE_INT;
+		alu.is_op3 = 1;
+		alu.dst.sel = tmp_sign;
+		alu.dst.chan = i;
+		alu.dst.write = 1;
+		alu.src[0].sel = tmp_exponent;
+		alu.src[0].chan = i;
+		alu.src[1].sel = V_SQ_ALU_SRC_0;
+		alu.src[2].sel = tmp_sign;
+		alu.src[2].chan = i;
+		alu.last = i > 0;
+		r = r600_bytecode_add_alu(ctx->bc, &alu);
+		if (r)
+			return r;
+	}
+
+	/* subnormal: overwrite lmant */
+	for (i=0; i<2; i++) {
+		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+		alu.op = ALU_OP3_CNDE_INT;
+		alu.is_op3 = 1;
+		alu.dst.sel = tmp_mantissa_low;
+		alu.dst.chan = i;
+		alu.dst.write = 1;
+		alu.src[0].sel = tmp_exponent;
+		alu.src[0].chan = i;
+		alu.src[1].sel = V_SQ_ALU_SRC_0;
+		alu.src[2].sel = tmp_mantissa_low;
+		alu.src[2].chan = i;
+		alu.last = i > 0;
+		r = r600_bytecode_add_alu(ctx->bc, &alu);
+		if (r)
+			return r;
+	}
+
+
+	/* subnormal: overwrite sign */
+	for (i=0; i<2; i++) {
+		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+		alu.op = ALU_OP3_CNDE_INT;
+		alu.is_op3 = 1;
+		alu.dst.sel = tmp_mantissa_high;
+		alu.dst.chan = i;
+		alu.dst.write = 1;
+		alu.src[0].sel = tmp_exponent;
+		alu.src[0].chan = i;
+		alu.src[1].sel = V_SQ_ALU_SRC_0;
+		alu.src[2].sel = tmp_mantissa_high;
+		alu.src[2].chan = i;
+		alu.last = i > 0;
+		r = r600_bytecode_add_alu(ctx->bc, &alu);
+		if (r)
+			return r;
+	}
+
+	/* NaN: set result to false if either is NaN 
+	 * if exp = 0x7ff and mantissa_low == 0 and mantissa_high == 0
+	 * then it's a NaN
+	 */
+
+	/* exp(x) == b11111111111 and mantissa >  */
+	for (i=0; i<2; i++) {
+		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+		alu.op = ALU_OP2_SETE_INT;
+		alu.dst.sel = tmp_temporary;
+		alu.dst.chan = i+2;
+		alu.dst.write = 1;
+		alu.src[0].sel = tmp_exponent;
+		alu.src[0].chan = i;
+		alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
+		alu.src[1].value = 0x7ff00000;
+		alu.last = i > 0;
+		r = r600_bytecode_add_alu(ctx->bc, &alu);
+		if (r)
+			return r;
+	}
+	/* lmant(x) != 0 || hmant(x) != 0 */
+	for (i=0; i<2; i++) {
 		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
 		alu.op = ALU_OP2_OR_INT;
-		alu.dst.sel = tmp_frac;
+		alu.dst.sel = tmp_temporary;
 		alu.dst.chan = i;
 		alu.dst.write = 1;
-		alu.src[0].sel = V_SQ_ALU_SRC_PV;
+		alu.src[0].sel = tmp_mantissa_low;
 		alu.src[0].chan = i;
-		alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
-		alu.src[1].value = 0x40000000;
+		alu.src[1].sel = tmp_mantissa_high;
+		alu.src[1].chan = i;
 		alu.last = i > 0;
 		r = r600_bytecode_add_alu(ctx->bc, &alu);
 		if (r)
 			return r;
 	}
+	/* temporary.xy && temporary.zw */
+	for (i=0; i<2; i++) {
+		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+		alu.op = ALU_OP2_AND_INT;
+		alu.dst.sel = tmp_temporary;
+		alu.dst.chan = i;
+		alu.dst.write = 1;
+		alu.src[0].sel = tmp_temporary;
+		alu.src[0].chan = i;
+		alu.src[1].sel = tmp_temporary;
+		alu.src[1].chan = i+2;
+		alu.last = i > 0;
+		r = r600_bytecode_add_alu(ctx->bc, &alu);
+		if (r)
+			return r;
+	}
+
+	/* set result to false if either was NaN */
+	for (i=0; i<2; i++) {
+		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+		alu.op = ALU_OP3_CNDE_INT;
+		alu.is_op3 = 1;
+		tgsi_dst(ctx, &inst->Dst[0], 0, &alu.dst);
+		alu.src[0].sel = tmp_temporary;
+		alu.src[0].chan = i;
+		alu.src[1].sel = V_SQ_ALU_SRC_0;
+		alu.src[2].sel = V_SQ_ALU_SRC_M_1_INT;
+		alu.last = 1; //we write to same destination in both cases
+		r = r600_bytecode_add_alu(ctx->bc, &alu);
+		if (r)
+			return r;
+	}
+
+	/* sign(a) >(int) sign(b) */
+	memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+	alu.op = ALU_OP2_SETGT_INT;
+	alu.dst.sel = tmp_temporary;
+	alu.dst.chan = 0;
+	alu.dst.write = 1;
+	alu.src[0].sel = tmp_sign;
+	alu.src[0].chan = 0;
+	alu.src[1].sel = tmp_sign;
+	alu.src[1].chan = 1;
+	r = r600_bytecode_add_alu(ctx->bc, &alu);
+	if (r)
+		return r;
+
+	/* exp(a) >(int) exp(b) */
+	memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+	alu.op = ALU_OP2_SUB_INT;
+	alu.dst.sel = tmp_temporary;
+	alu.dst.chan = 1;
+	alu.dst.write = 1;
+	alu.src[0].sel = tmp_exponent;
+	alu.src[0].chan = 0;
+	alu.src[1].sel = tmp_exponent;
+	alu.src[1].chan = 1;
+	alu.last = 1;
+	r = r600_bytecode_add_alu(ctx->bc, &alu);
+	if (r)
+		return r;
+
+	/* hmant(a) >(int) hmant(b) */
+	memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+	alu.op = ALU_OP2_SUB_INT;
+	alu.dst.sel = tmp_temporary;
+	alu.dst.chan = 2;
+	alu.dst.write = 1;
+	alu.src[0].sel = tmp_mantissa_high;
+	alu.src[0].chan = 0;
+	alu.src[1].sel = tmp_mantissa_high;
+	alu.src[1].chan = 1;
+	r = r600_bytecode_add_alu(ctx->bc, &alu);
+	if (r)
+		return r;
+
+	/* lmant(a) >(int) lmant(b) */
+	memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+	alu.op = ALU_OP2_SUB_INT;
+	alu.dst.sel = tmp_temporary;
+	alu.dst.chan = 3;
+	alu.dst.write = 1;
+	alu.src[0].sel = tmp_mantissa_low;
+	alu.src[0].chan = 0;
+	alu.src[1].sel = tmp_mantissa_low;
+	alu.src[1].chan = 1;
+	alu.last = 1;
+	r = r600_bytecode_add_alu(ctx->bc, &alu);
+	if (r)
+		return r;
+  
+	/* result: check if either a or b were NaN (current result) or sign is different */
+/*
+	memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+	alu.op = ALU_OP2_OR_INT;
+	tgsi_dst(ctx, &inst->Dst[0], 0, &alu.dst);
+	alu.src[0].sel = alu.dst.sel;
+	alu.src[0].chan = alu.dst.chan;
+	alu.src[1].sel = tmp_temporary;
+	alu.src[1].chan = 0;
+	alu.last = 1;
+	r = r600_bytecode_add_alu(ctx->bc, &alu);
+	if (r)
+		return r;
+*/
+	/* TEMPORARY WORKAROUND */
+/*
+	memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+	alu.op = ALU_OP1_MOV;
+	tgsi_dst(ctx, &inst->Dst[0], 0, &alu.dst);
+	alu.src[0].sel = tmp_temporary;
+	alu.src[1].chan = 0;
+	alu.last = 1;
+	r = r600_bytecode_add_alu(ctx->bc, &alu);
+	if (r)
+		return r;
 */
 
-	/* Test output */
+	/* result: if either of the results is -1, then all the others are 
+	 * "exp(a) - exp(b) < 0" is equivalent to "exp(a) - exp(b) <= -1"
+	 * hence just compare "exp(a) - exp(b) <= previous_result >> 1"
+	 */
+	for(i=0; i<4; i++) {
+		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+		alu.op = ALU_OP2_LSHR_INT;
+		tgsi_dst(ctx, &inst->Dst[0], 0, &alu.dst);
+		alu.src[0].sel = alu.dst.sel;
+		alu.src[0].chan = alu.dst.chan;
+		alu.src[1].sel = V_SQ_ALU_SRC_1_INT;
+		alu.last = 1;
+		r = r600_bytecode_add_alu(ctx->bc, &alu);
+		if (r)
+			return r;
+
+		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
+		alu.op = ALU_OP2_SETGT_INT;
+		tgsi_dst(ctx, &inst->Dst[0], 0, &alu.dst);
+		alu.src[0].sel = alu.dst.sel;
+		alu.src[0].chan = alu.dst.chan;
+		alu.src[1].sel = tmp_temporary;
+		alu.src[1].chan = i;
+		alu.last = 1;
+		r = r600_bytecode_add_alu(ctx->bc, &alu);
+		if (r)
+			return r;
+	}
+
+	/* invert number, as true==1.0 and false==0.0 */
 	memset(&alu, 0, sizeof(struct r600_bytecode_alu));
-	alu.op = ALU_OP2_SETGE_INT;
+	alu.op = ALU_OP1_NOT_INT;
 	tgsi_dst(ctx, &inst->Dst[0], 0, &alu.dst);
-	alu.src[0].sel = tmp_frac;
-	alu.src[0].chan = 0;
-	alu.src[1].sel = tmp_frac;
-	alu.src[1].chan = 2;
-	alu.last = i > 0;
+	alu.src[0].sel = alu.dst.sel;
+	alu.src[0].chan = alu.dst.chan;
+	alu.last = 1;
 	r = r600_bytecode_add_alu(ctx->bc, &alu);
 	if (r)
 		return r;
