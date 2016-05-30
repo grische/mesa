@@ -3919,6 +3919,7 @@ static int tgsi_op2_64_dsge_emulation(struct r600_shader_ctx *ctx)
 
 	// results (chan 0 = a, chan 1 = b)
 	int tmp_is_nan        = r600_get_temp(ctx);
+	int tmp_is_nan_temp2  = r600_get_temp(ctx);
 
 	// results (chan 0 = final, chan 1 = temp)
 	int tmp_temporary     = r600_get_temp(ctx);
@@ -3928,7 +3929,7 @@ static int tgsi_op2_64_dsge_emulation(struct r600_shader_ctx *ctx)
 		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
 		alu.op = ALU_OP2_AND_INT;
 		alu.dst.sel = tmp_mantissa_high;
-		alu.dst.chan = i*2; //x, z
+		alu.dst.chan = i;
 		alu.dst.write = 1;
 		r600_bytecode_src(&alu.src[0], &ctx->src[i], 1);
 		alu.src[1].sel = V_SQ_ALU_SRC_LITERAL;
@@ -4051,8 +4052,8 @@ static int tgsi_op2_64_dsge_emulation(struct r600_shader_ctx *ctx)
 	for (i=0; i<2; i++) {
 		memset(&alu, 0, sizeof(struct r600_bytecode_alu));
 		alu.op = ALU_OP2_SETE_INT;
-		alu.dst.sel = tmp_temporary;
-		alu.dst.chan = i+2;
+		alu.dst.sel = tmp_is_nan_temp2;
+		alu.dst.chan = i;
 		alu.dst.write = 1;
 		alu.src[0].sel = tmp_exponent;
 		alu.src[0].chan = i;
@@ -4089,8 +4090,8 @@ static int tgsi_op2_64_dsge_emulation(struct r600_shader_ctx *ctx)
 		alu.dst.write = 1;
 		alu.src[0].sel = tmp_temporary;
 		alu.src[0].chan = i;
-		alu.src[1].sel = tmp_temporary;
-		alu.src[1].chan = i+2;
+		alu.src[1].sel = tmp_is_nan_temp2;
+		alu.src[1].chan = i;
 		alu.last = i > 0;
 		r = r600_bytecode_add_alu(ctx->bc, &alu);
 		if (r)
@@ -4195,8 +4196,6 @@ static int tgsi_op2_64_dsge_emulation(struct r600_shader_ctx *ctx)
 	alu.src[0].chan = 1;
 	alu.src[1].sel = tmp_mantissa_high;
 	alu.src[1].chan = 0;
-	//r600_bytecode_src(&alu.src[0], &ctx->src[0], 1);
-	//r600_bytecode_src(&alu.src[1], &ctx->src[1], 1);
 	alu.last = 1;
 	r = r600_bytecode_add_alu(ctx->bc, &alu);
 	if (r)
@@ -4227,8 +4226,6 @@ static int tgsi_op2_64_dsge_emulation(struct r600_shader_ctx *ctx)
 	alu.src[0].chan = 0;
 	alu.src[1].sel = tmp_exponent;
 	alu.src[1].chan = 1;
-	//r600_bytecode_src(&alu.src[0], &ctx->src[0], 1);
-	//r600_bytecode_src(&alu.src[1], &ctx->src[1], 1);
 	alu.last = 1;
 	r = r600_bytecode_add_alu(ctx->bc, &alu);
 	if (r)
